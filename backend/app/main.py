@@ -1,3 +1,4 @@
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,6 +9,9 @@ from app.database import Base, engine
 from app.routers import health, predictions, repositories, webhooks
 
 settings = get_settings()
+
+# Recorded at import time so the /health endpoint can report uptime.
+APP_START_TIME: float = time.time()
 
 
 @asynccontextmanager

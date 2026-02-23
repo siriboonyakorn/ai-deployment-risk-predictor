@@ -1,8 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0d1117;
+  --foreground: #e6edf3;
+  --surface: #161b22;
+  --surface-raised: #1c2128;
+  --border: #30363d;
+  --border-subtle: #21262d;
+  --text-muted: #7d8590;
+  --accent: #2f81f7;
+  --accent-hover: #58a6ff;
+  --risk-low: #3fb950;
+  --risk-medium: #d29922;
+  --risk-high: #f85149;
 }
 
 @theme inline {
@@ -12,15 +22,44 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
 }
 
+html,
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  height: 100%;
 }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+.risk-low    { background: rgba(63,185,80,0.12);  color: #3fb950; border-color: rgba(63,185,80,0.35); }
+.risk-medium { background: rgba(210,153,34,0.12); color: #d29922; border-color: rgba(210,153,34,0.35); }
+.risk-high   { background: rgba(248,81,73,0.12);  color: #f85149; border-color: rgba(248,81,73,0.35); }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid;
+  text-transform: uppercase;
+}
+

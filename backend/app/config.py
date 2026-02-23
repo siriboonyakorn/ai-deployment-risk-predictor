@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     GITHUB_CLIENT_SECRET: str = ""
     GITHUB_WEBHOOK_SECRET: str = ""
 
+    # GitHub API (Personal Access Token for fetching repo data)
+    GITHUB_TOKEN: str = ""
+
     # Security
     SECRET_KEY: str = "change-this-in-production"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours

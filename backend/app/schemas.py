@@ -14,6 +14,8 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     timestamp: datetime
+    uptime_seconds: float
+    db_status: str  # "ok" | "unreachable"
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +127,72 @@ class RiskAssessmentResponse(BaseModel):
 class RiskPredictionResponse(BaseModel):
     commit: CommitResponse
     assessment: RiskAssessmentResponse
+
+
+# ---------------------------------------------------------------------------
+# GitHub URL import
+# ---------------------------------------------------------------------------
+
+class RepoImportRequest(BaseModel):
+    """Payload for POST /repositories/import."""
+    github_url: str
+    # Optional branch to pull commit history from (defaults to default branch)
+    branch: Optional[str] = None
+
+
+class GitHubAuthor(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    date: Optional[datetime] = None
+
+
+class GitHubCommitDetail(BaseModel):
+    message: str
+    author: Optional[GitHubAuthor] = None
+    committer: Optional[GitHubAuthor] = None
+
+
+class GitHubCommitItem(BaseModel):
+    """A single commit entry as returned by GET /repos/{owner}/{repo}/commits."""
+    sha: str
+    html_url: str
+    commit: GitHubCommitDetail
+
+
+class GitHubRepoMetadata(BaseModel):
+    """Subset of GitHub repo fields surfaced on the import response."""
+    github_repo_id: int
+    name: str
+    full_name: str
+    description: Optional[str] = None
+    is_private: bool
+    default_branch: str
+    stars: int
+    forks: int
+    open_issues: int
+    html_url: str
+    language: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class RepoImportResponse(BaseModel):
+    """Response for POST /repositories/import."""
+    repository: RepositoryResponse
+    metadata: GitHubRepoMetadata
+    commits: list[GitHubCommitItem]
+    commits_fetched: int
+
+
+class CommitHistoryResponse(BaseModel):
+    """Response for GET /repositories/{repo_id}/commits."""
+    repository_id: int
+    full_name: str
+    branch: Optional[str] = None
+    page: int
+    per_page: int
+    commits: list[GitHubCommitItem]
+    commits_fetched: int
 
 
 # ---------------------------------------------------------------------------
