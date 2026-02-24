@@ -244,10 +244,13 @@ const STEPS = [
 
 export default function HomePage() {
   const router = useRouter();
-  const [authed] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return isAuthenticated();
-  });
+  const [authed, setAuthed] = useState(false);
+
+  // Must run after hydration so server and client initial renders match.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAuthed(isAuthenticated());
+  }, []);
 
   return (
     <div
