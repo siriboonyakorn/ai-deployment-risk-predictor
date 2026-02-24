@@ -3,16 +3,20 @@
  * Uses Next.js rewrites so every path goes through /api/v1/* → backend.
  */
 
+import { getToken } from "@/lib/auth";
+
 const API_BASE = "/api/v1";
 
 async function request<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
   });
@@ -32,6 +36,15 @@ async function request<T>(
 // ---------------------------------------------------------------------------
 
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  email: string | null;
+  avatar_url: string | null;
+  is_active: boolean;
+  created_at: string;
+}
 
 export interface HealthResponse {
   status: string;
@@ -133,6 +146,13 @@ export interface RiskPredictionResponse {
 export const api = {
   health: {
     get: () => request<HealthResponse>("/health"),
+  },
+
+  auth: {
+    me: () =>
+      request<AuthUser>("/auth/me"),
+    logout: () =>
+      request<{ message: string }>("/auth/logout", { method: "POST" }),
   },
 
   repositories: {

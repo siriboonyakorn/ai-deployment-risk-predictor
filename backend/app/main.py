@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import Base, engine
 from app.routers import health, predictions, repositories, webhooks
+from app.routers import auth
 
 settings = get_settings()
 
@@ -49,6 +50,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(health.router, prefix=settings.API_PREFIX)
+app.include_router(auth.router, prefix=settings.API_PREFIX)
 app.include_router(predictions.router, prefix=settings.API_PREFIX)
 app.include_router(repositories.router, prefix=settings.API_PREFIX)
 app.include_router(webhooks.router, prefix=settings.API_PREFIX)

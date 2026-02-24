@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { api, AuthUser } from "@/lib/api";
+import { logout } from "@/lib/auth";
 
 // ---------------------------------------------------------------------------
 // Icons (inline SVG)
@@ -94,6 +97,11 @@ const comingSoon = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [user, setUser] = useState<AuthUser | null>(null);
+
+  useEffect(() => {
+    api.auth.me().then(setUser).catch(() => setUser(null));
+  }, []);
 
   const isActive = (href: string) =>
     href === "/dashboard"
@@ -172,6 +180,54 @@ export default function Sidebar() {
           API Docs
         </a>
       </div>
+
+      {/* User profile + logout */}
+      {user && (
+        <div
+          className="border-t px-3 py-3 flex items-center gap-2.5"
+          style={{ borderColor: "var(--border-subtle)" }}
+        >
+          {user.avatar_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={user.avatar_url}
+              alt={user.username}
+              width={28}
+              height={28}
+              className="rounded-full flex-shrink-0"
+            />
+          ) : (
+            <div
+              className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0"
+              style={{ background: "var(--accent)", color: "#fff" }}
+            >
+              {user.username[0].toUpperCase()}
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-medium truncate" style={{ color: "var(--foreground)" }}>
+              {user.username}
+            </div>
+            {user.email && (
+              <div className="text-[10px] truncate" style={{ color: "var(--text-muted)" }}>
+                {user.email}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={logout}
+            title="Sign out"
+            className="flex-shrink-0 p-1 rounded transition-colors cursor-pointer"
+            style={{ color: "var(--text-muted)" }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "#f85149")}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)")}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 0 1 0 1.5h-2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 0 1 0 1.5h-2.5A1.75 1.75 0 0 1 2 13.25Zm10.44 4.5-1.97-1.97a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215l3.25 3.25a.75.75 0 0 1 0 1.06l-3.25 3.25a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734l1.97-1.97H6.75a.75.75 0 0 1 0-1.5Z" />
+            </svg>
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

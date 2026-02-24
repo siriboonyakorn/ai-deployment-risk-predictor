@@ -212,3 +212,20 @@ class WebhookPushPayload(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+class TokenResponse(BaseModel):
+    """Returned after a successful GitHub OAuth login."""
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int  # seconds
+    user: "UserResponse"
+
+
+class GitHubLoginURL(BaseModel):
+    """Returned by GET /auth/github/login so clients can redirect themselves."""
+    url: str
