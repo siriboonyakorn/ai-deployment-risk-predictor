@@ -1,146 +1,271 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  api,
+  Repository,
+  GitHubCommitItem,
+  RiskPredictionResponse,
+  RiskPredictionRequest,
+} from "@/lib/api";
 import RiskBadge from "@/components/RiskBadge";
-import type { RiskLevel } from "@/lib/api";
 
-// ---------------------------------------------------------------------------
-// Static placeholder data — will be replaced by live API calls once
-// the ML pipeline and webhook data population are complete.
-// ---------------------------------------------------------------------------
-const placeholderAssessments = [
-  {
-    id: 1,
-    sha: "a3f2c1d",
-    repo: "owner/api-service",
-    message: "fix: urgent hotfix for auth bypass",
-    risk_level: "HIGH" as RiskLevel,
-    risk_score: 82,
-    confidence: 0.91,
-    model_version: "rule-v1",
-    lines_changed: 847,
-    files_changed: 14,
-    created_at: "2026-02-23T10:15:00Z",
-  },
-  {
-    id: 2,
-    sha: "b7e8912",
-    repo: "owner/frontend-app",
-    message: "feat: add user profile dashboard",
-    risk_level: "MEDIUM" as RiskLevel,
-    risk_score: 45,
-    confidence: 0.78,
-    model_version: "rule-v1",
-    lines_changed: 312,
-    files_changed: 8,
-    created_at: "2026-02-23T09:40:00Z",
-  },
-  {
-    id: 3,
-    sha: "c1d4567",
-    repo: "owner/data-pipeline",
-    message: "chore: update dependencies",
-    risk_level: "LOW" as RiskLevel,
-    risk_score: 12,
-    confidence: 0.95,
-    model_version: "rule-v1",
-    lines_changed: 28,
-    files_changed: 2,
-    created_at: "2026-02-23T08:55:00Z",
-  },
-  {
-    id: 4,
-    sha: "d9a0b3e",
-    repo: "owner/api-service",
-    message: "docs: update README and contributing guide",
-    risk_level: "LOW" as RiskLevel,
-    risk_score: 5,
-    confidence: 0.97,
-    model_version: "rule-v1",
-    lines_changed: 60,
-    files_changed: 3,
-    created_at: "2026-02-23T07:30:00Z",
-  },
-];
+interface HistoryEntry {
+  sha: string;
+  repoName: string;
+  message: string;
+  result: RiskPredictionResponse;
+  analyzedAt: string;
+}
 
-// ---------------------------------------------------------------------------
-// Risk distribution metrics
-// ---------------------------------------------------------------------------
-function RiskMeter({ score }: { score: number }) {
-  const color = score >= 60 ? "#f85149" : score >= 30 ? "#d29922" : "#3fb950";
+function RiskMeter({ score, level }: { score: number; level: string }) {
+  const color =
+    level === "HIGH"
+      ? "var(--risk-high)"
+      : level === "MEDIUM"
+      ? "var(--risk-medium)"
+      : "var(--risk-low)";
+
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--border)" }}>
-        <div className="h-full rounded-full" style={{ width: `${score}%`, background: color }} />
+    <div className="space-y-2">
+      <div className="flex items-end justify-between">
+        <span className="text-4xl font-bold" style={{ color }}>
+          {score}
+        </span>
+        <span className="text-sm mb-1" style={{ color: "var(--text-muted)" }}>
+          / 100
+        </span>
       </div>
-      <span className="text-xs font-mono font-semibold w-8 text-right" style={{ color }}>
-        {score}%
-      </span>
+      <div
+        className="h-2.5 rounded-full overflow-hidden"
+        style={{ background: "var(--border)" }}
+      >
+        <div
+          className="h-full rounded-full transition-all duration-700"
+          style={{ width: `${score}%`, background: color }}
+        />
+      </div>
+      <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+        {score < 30
+          ? "Low risk — safe to deploy"
+          : score < 60
+          ? "Moderate risk — review before deploying"
+          : "High risk — requires thorough review"}
+      </div>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// ML Model Status Card
-// ---------------------------------------------------------------------------
-function ModelStatusCard() {
-  const features = [
-    { name: "Lines changed", ready: true },
-    { name: "Files modified", ready: true },
-    { name: "Commit message analysis", ready: true },
-    { name: "Code complexity (AST)", ready: false },
-    { name: "Historical bug correlation", ready: false },
-    { name: "PR review patterns", ready: false },
-    { name: "Developer burnout signals", ready: false },
-  ];
-
+function ResultCard({ result }: { result: RiskPredictionResponse }) {
+  const { commit, assessment } = result;
   return (
-    <div className="card p-5">
-      <div className="flex items-center justify-between mb-4">
-        <div className="text-sm font-semibold" style={{ color: "var(--foreground)" }}>ML Model Status</div>
-        <span
-          className="badge"
-          style={{ background: "#d2992218", color: "#d29922", borderColor: "#d2992240" }}
-        >
-          Rule-based MVP
-        </span>
+    <div
+      className="rounded-xl p-5 space-y-4 animate-fade-up"
+      style={{ background: "var(--surface)", border: "1px solid var(--border)" }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div
+            className="text-xs font-mono mb-1"
+            style={{ color: "var(--text-muted)" }}
+          >
+            {commit.sha.slice(0, 7)}
+          </div>
+          <div
+            className="text-sm font-medium truncate"
+            style={{ color: "var(--foreground)" }}
+          >
+            {commit.message ?? "(no message)"}
+          </div>
+        </div>
+        <RiskBadge level={assessment.risk_level} />
       </div>
-      <div className="space-y-2 mb-4">
-        {features.map((f) => (
-          <div key={f.name} className="flex items-center gap-2 text-xs">
-            <span style={{ color: f.ready ? "#3fb950" : "var(--border)" }}>{f.ready ? "✓" : "○"}</span>
-            <span style={{ color: f.ready ? "var(--foreground)" : "var(--text-muted)" }}>{f.name}</span>
-            {!f.ready && (
-              <span
-                className="ml-auto text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
-                style={{ background: "var(--surface-raised)", color: "var(--text-muted)", border: "1px solid var(--border-subtle)" }}
-              >
-                Roadmap
-              </span>
-            )}
+
+      <RiskMeter score={assessment.risk_score} level={assessment.risk_level} />
+
+      <div className="grid grid-cols-3 gap-3 pt-1">
+        {[
+          {
+            label: "Confidence",
+            value:
+              assessment.confidence != null
+                ? `${Math.round(assessment.confidence * 100)}%`
+                : "—",
+          },
+          { label: "Lines +", value: commit.lines_added },
+          { label: "Lines −", value: commit.lines_deleted },
+        ].map(({ label, value }) => (
+          <div
+            key={label}
+            className="rounded-lg p-3 text-center"
+            style={{ background: "var(--surface-raised)" }}
+          >
+            <div
+              className="text-xs mb-1"
+              style={{ color: "var(--text-muted)" }}
+            >
+              {label}
+            </div>
+            <div
+              className="text-sm font-semibold"
+              style={{ color: "var(--foreground)" }}
+            >
+              {String(value)}
+            </div>
           </div>
         ))}
       </div>
+
       <div
-        className="text-[11px] pt-3"
-        style={{ borderTop: "1px solid var(--border-subtle)", color: "var(--text-muted)" }}
+        className="text-xs pt-1"
+        style={{
+          color: "var(--text-muted)",
+          borderTop: "1px solid var(--border-subtle)",
+        }}
       >
-        scikit-learn Logistic Regression model planned for milestone 2.
-        Current scoring uses rule-based heuristics with 75% fixed confidence.
+        Model: {assessment.model_version} · Analyzed{" "}
+        {new Date(assessment.created_at).toLocaleString()}
       </div>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Page
-// ---------------------------------------------------------------------------
+function HistoryRow({
+  entry,
+  onSelect,
+}: {
+  entry: HistoryEntry;
+  onSelect: (entry: HistoryEntry) => void;
+}) {
+  const { assessment, commit } = entry.result;
+  const color =
+    assessment.risk_level === "HIGH"
+      ? "var(--risk-high)"
+      : assessment.risk_level === "MEDIUM"
+      ? "var(--risk-medium)"
+      : "var(--risk-low)";
+
+  return (
+    <button
+      onClick={() => onSelect(entry)}
+      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all hover:brightness-110"
+      style={{
+        background: "var(--surface-raised)",
+        border: "1px solid transparent",
+      }}
+    >
+      <div
+        className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+        style={{ background: color }}
+      />
+      <div className="flex-1 min-w-0">
+        <div
+          className="text-xs font-mono truncate"
+          style={{ color: "var(--text-muted)" }}
+        >
+          {commit.sha.slice(0, 7)}
+        </div>
+        <div
+          className="text-xs truncate mt-0.5"
+          style={{ color: "var(--foreground)" }}
+        >
+          {entry.message.split("\n")[0] || "(no message)"}
+        </div>
+      </div>
+      <div className="text-right flex-shrink-0">
+        <div className="text-sm font-semibold" style={{ color }}>
+          {assessment.risk_score}
+        </div>
+        <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+          {assessment.risk_level}
+        </div>
+      </div>
+    </button>
+  );
+}
+
 export default function PredictionsPage() {
-  const high = placeholderAssessments.filter((a) => a.risk_level === "HIGH").length;
-  const medium = placeholderAssessments.filter((a) => a.risk_level === "MEDIUM").length;
-  const low = placeholderAssessments.filter((a) => a.risk_level === "LOW").length;
-  const avg =
-    Math.round(
-      placeholderAssessments.reduce((s, a) => s + a.risk_score, 0) /
-        placeholderAssessments.length
-    );
+  // Form state
+  const [repos, setRepos] = useState<Repository[]>([]);
+  const [selectedRepoId, setSelectedRepoId] = useState("");
+  const [commits, setCommits] = useState<GitHubCommitItem[]>([]);
+  const [commitsLoading, setCommitsLoading] = useState(false);
+  const [selectedSha, setSelectedSha] = useState("");
+  const [manualSha, setManualSha] = useState("");
+  const [linesAdded, setLinesAdded] = useState("");
+  const [linesDeleted, setLinesDeleted] = useState("");
+  const [filesChanged, setFilesChanged] = useState("");
+
+  // Result state
+  const [analyzing, setAnalyzing] = useState(false);
+  const [result, setResult] = useState<RiskPredictionResponse | null>(null);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+
+  // History
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+
+  // Load repos
+  useEffect(() => {
+    api.repositories.list().then(setRepos).catch(() => {});
+  }, []);
+
+  // Load commits when repo changes
+  useEffect(() => {
+    if (!selectedRepoId) {
+      setCommits([]);
+      return;
+    }
+    setCommitsLoading(true);
+    api.repositories
+      .commits(Number(selectedRepoId), 1, 50)
+      .then((r) => setCommits(r.commits))
+      .catch(() => setCommits([]))
+      .finally(() => setCommitsLoading(false));
+  }, [selectedRepoId]);
+
+  const selectedRepo = repos.find((r) => String(r.id) === selectedRepoId);
+  const effectiveSha = manualSha.trim() || selectedSha;
+  const selectedCommit = commits.find((c) => c.sha === selectedSha);
+
+  const handleAnalyze = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!effectiveSha || !selectedRepo) return;
+
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    setResult(null);
+
+    const payload: RiskPredictionRequest = {
+      sha: effectiveSha,
+      repository_full_name: selectedRepo.full_name,
+      commit_message: selectedCommit?.commit.message ?? undefined,
+      author_email: selectedCommit?.commit.author?.email ?? undefined,
+      lines_added: linesAdded ? Number(linesAdded) : 0,
+      lines_deleted: linesDeleted ? Number(linesDeleted) : 0,
+      files_changed: filesChanged ? Number(filesChanged) : 0,
+    };
+
+    try {
+      const res = await api.predictions.create(payload);
+      setResult(res);
+      const entry: HistoryEntry = {
+        sha: effectiveSha,
+        repoName: selectedRepo.full_name,
+        message: selectedCommit?.commit.message ?? manualSha,
+        result: res,
+        analyzedAt: new Date().toISOString(),
+      };
+      setHistory((prev) => [entry, ...prev.slice(0, 19)]);
+    } catch (err) {
+      setAnalyzeError(
+        err instanceof Error ? err.message : "Analysis failed"
+      );
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const canAnalyze = !!effectiveSha && !!selectedRepo && !analyzing;
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -150,133 +275,330 @@ export default function PredictionsPage() {
         style={{ borderColor: "var(--border-subtle)" }}
       >
         <div>
-          <h1 className="text-base font-semibold" style={{ color: "var(--foreground)" }}>
-            Risk Predictions
+          <h1
+            className="text-base font-semibold"
+            style={{ color: "var(--foreground)" }}
+          >
+            Risk Analysis
           </h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
-            Deployment risk scoring per commit — rule-based MVP, ML model coming next
+            Predict deployment risk for any commit in your connected
+            repositories
           </p>
         </div>
-        <span
-          className="badge"
-          style={{ background: "#d2992218", color: "#d29922", borderColor: "#d2992240" }}
-        >
-          Demo Data
-        </span>
       </header>
 
-      <main className="flex-1 p-6 space-y-6">
-        {/* Summary row */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[
-            { label: "High Risk", value: high, color: "#f85149" },
-            { label: "Medium Risk", value: medium, color: "#d29922" },
-            { label: "Low Risk", value: low, color: "#3fb950" },
-            { label: "Avg Score", value: `${avg}%`, color: "var(--foreground)" },
-          ].map((s) => (
-            <div key={s.label} className="card p-4">
-              <div className="text-xs uppercase tracking-wider mb-2" style={{ color: "var(--text-muted)" }}>
-                {s.label}
-              </div>
-              <div className="text-3xl font-bold" style={{ color: s.color }}>
-                {s.value}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Assessments table */}
-          <div className="lg:col-span-2">
-            <div className="card overflow-hidden">
-              <div
-                className="flex items-center justify-between px-4 py-3 border-b"
-                style={{ borderColor: "var(--border-subtle)" }}
+      <main className="flex-1 p-6">
+        <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          {/* ── Left: Form ─────────────────────────────── */}
+          <div
+            className="rounded-xl p-5 space-y-4"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="var(--accent)"
               >
-                <div className="text-sm font-semibold" style={{ color: "var(--foreground)" }}>
-                  Recent Risk Assessments
+                <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z" />
+              </svg>
+              <h2
+                className="text-sm font-semibold"
+                style={{ color: "var(--foreground)" }}
+              >
+                Analyze a Commit
+              </h2>
+            </div>
+
+            <form onSubmit={handleAnalyze} className="space-y-3">
+              {/* Repository selector */}
+              <div className="space-y-1">
+                <label
+                  className="text-xs font-medium"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  Repository
+                </label>
+                <select
+                  value={selectedRepoId}
+                  onChange={(e) => {
+                    setSelectedRepoId(e.target.value);
+                    setSelectedSha("");
+                    setManualSha("");
+                  }}
+                  className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                  style={{
+                    background: "var(--surface-raised)",
+                    border: "1px solid var(--border)",
+                    color: selectedRepoId
+                      ? "var(--foreground)"
+                      : "var(--text-muted)",
+                  }}
+                >
+                  <option value="">Select a repository…</option>
+                  {repos.map((r) => (
+                    <option key={r.id} value={String(r.id)}>
+                      {r.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Commit selector */}
+              <div className="space-y-1">
+                <label
+                  className="text-xs font-medium"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  Commit{commitsLoading ? " (loading…)" : ""}
+                </label>
+                <select
+                  value={selectedSha}
+                  onChange={(e) => {
+                    setSelectedSha(e.target.value);
+                    setManualSha("");
+                  }}
+                  disabled={!selectedRepoId || commitsLoading}
+                  className="w-full px-3 py-2 rounded-lg text-sm outline-none disabled:opacity-50"
+                  style={{
+                    background: "var(--surface-raised)",
+                    border: "1px solid var(--border)",
+                    color: selectedSha
+                      ? "var(--foreground)"
+                      : "var(--text-muted)",
+                  }}
+                >
+                  <option value="">Select a commit…</option>
+                  {commits.map((c) => (
+                    <option key={c.sha} value={c.sha}>
+                      {c.sha.slice(0, 7)} —{" "}
+                      {c.commit.message.split("\n")[0].slice(0, 55)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Divider */}
+              <div className="flex items-center gap-2">
+                <div
+                  className="flex-1 h-px"
+                  style={{ background: "var(--border-subtle)" }}
+                />
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  or enter SHA manually
+                </span>
+                <div
+                  className="flex-1 h-px"
+                  style={{ background: "var(--border-subtle)" }}
+                />
+              </div>
+
+              {/* Manual SHA input */}
+              <input
+                type="text"
+                value={manualSha}
+                onChange={(e) => {
+                  setManualSha(e.target.value);
+                  setSelectedSha("");
+                }}
+                placeholder="Paste commit SHA (e.g. a1b2c3d…)"
+                className="w-full px-3 py-2 rounded-lg text-sm font-mono outline-none"
+                style={{
+                  background: "var(--surface-raised)",
+                  border: "1px solid var(--border)",
+                  color: "var(--foreground)",
+                }}
+              />
+
+              {/* Optional diff stats */}
+              <div
+                className="rounded-lg p-3 space-y-2"
+                style={{ background: "var(--surface-raised)" }}
+              >
+                <div
+                  className="text-xs font-medium"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  Diff stats{" "}
+                  <span style={{ fontWeight: 400 }}>
+                    (optional — improves score accuracy)
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    {
+                      label: "Lines added",
+                      value: linesAdded,
+                      onChange: setLinesAdded,
+                    },
+                    {
+                      label: "Lines deleted",
+                      value: linesDeleted,
+                      onChange: setLinesDeleted,
+                    },
+                    {
+                      label: "Files changed",
+                      value: filesChanged,
+                      onChange: setFilesChanged,
+                    },
+                  ].map(({ label, value, onChange }) => (
+                    <div key={label} className="space-y-1">
+                      <label
+                        className="text-xs"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        {label}
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={value}
+                        onChange={(e) => onChange(e.target.value)}
+                        placeholder="0"
+                        className="w-full px-2 py-1.5 rounded text-sm outline-none text-center"
+                        style={{
+                          background: "var(--background)",
+                          border: "1px solid var(--border)",
+                          color: "var(--foreground)",
+                        }}
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
-              <div className="divide-y" style={{ borderColor: "var(--border-subtle)" }}>
-                {placeholderAssessments.map((a) => (
-                  <div key={a.id} className="px-4 py-3.5 text-sm">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap mb-1">
-                          <code
-                            className="font-mono text-xs px-1.5 py-0.5 rounded"
-                            style={{ background: "var(--surface-raised)", color: "var(--accent-hover)" }}
-                          >
-                            {a.sha}
-                          </code>
-                          <span className="text-xs" style={{ color: "var(--text-muted)" }}>{a.repo}</span>
-                        </div>
-                        <div className="truncate text-xs" style={{ color: "var(--foreground)" }}>
-                          {a.message}
-                        </div>
-                        <div className="flex gap-3 mt-1.5 text-xs" style={{ color: "var(--text-muted)" }}>
-                          <span>±{a.lines_changed} lines</span>
-                          <span>{a.files_changed} files</span>
-                          <span>conf. {(a.confidence * 100).toFixed(0)}%</span>
-                          <span>{new Date(a.created_at).toLocaleString()}</span>
-                        </div>
-                      </div>
-                      <div className="flex-shrink-0 w-32">
-                        <RiskBadge level={a.risk_level} score={a.risk_score} />
-                        <div className="mt-2">
-                          <RiskMeter score={a.risk_score} />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+
+              {/* Error */}
+              {analyzeError && (
+                <div
+                  className="text-xs px-3 py-2 rounded-lg"
+                  style={{
+                    background: "#f851491a",
+                    color: "#f85149",
+                    border: "1px solid #f8514930",
+                  }}
+                >
+                  ⚠ {analyzeError}
+                </div>
+              )}
+
+              {/* Submit */}
+              <button
+                type="submit"
+                disabled={!canAnalyze}
+                className="btn-primary w-full py-2.5 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {analyzing ? (
+                  <>
+                    <svg
+                      className="animate-spin"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="3"
+                    >
+                      <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                    </svg>
+                    Analyzing…
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="currentColor"
+                    >
+                      <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z" />
+                    </svg>
+                    Analyze Risk
+                  </>
+                )}
+              </button>
+            </form>
           </div>
 
-          {/* Sidebar */}
+          {/* ── Right: Result + History ─────────────────── */}
           <div className="space-y-4">
-            <ModelStatusCard />
-            <div className="card p-5">
-              <div className="text-sm font-semibold mb-3" style={{ color: "var(--foreground)" }}>
-                How Scoring Works
-              </div>
-              <div className="space-y-2.5 text-xs" style={{ color: "var(--text-muted)" }}>
-                <div className="flex justify-between">
-                  <span>Lines changed &gt; 500</span>
-                  <span className="font-mono" style={{ color: "var(--foreground)" }}>+40 pts</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Lines changed &gt; 200</span>
-                  <span className="font-mono" style={{ color: "var(--foreground)" }}>+25 pts</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Files &gt; 20</span>
-                  <span className="font-mono" style={{ color: "var(--foreground)" }}>+30 pts</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Risky keywords</span>
-                  <span className="font-mono" style={{ color: "var(--foreground)" }}>+15 pts</span>
+            {/* Result card or placeholder */}
+            {result ? (
+              <ResultCard result={result} />
+            ) : (
+              <div
+                className="rounded-xl p-8 flex flex-col items-center justify-center gap-3 text-center"
+                style={{
+                  background: "var(--surface)",
+                  border: "1px dashed var(--border)",
+                  minHeight: "220px",
+                }}
+              >
+                <div
+                  className="w-12 h-12 rounded-full flex items-center justify-center"
+                  style={{ background: "var(--surface-raised)" }}
+                >
+                  <svg
+                    width="22"
+                    height="22"
+                    viewBox="0 0 16 16"
+                    fill="var(--border)"
+                  >
+                    <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0ZM1.5 8a6.5 6.5 0 1 0 13 0 6.5 6.5 0 0 0-13 0Zm4.879-2.773 4.264 2.559a.25.25 0 0 1 0 .428l-4.264 2.559A.25.25 0 0 1 6 10.559V5.442a.25.25 0 0 1 .379-.215Z" />
+                  </svg>
                 </div>
                 <div
-                  className="pt-2 border-t"
-                  style={{ borderColor: "var(--border-subtle)" }}
+                  className="text-sm font-medium"
+                  style={{ color: "var(--text-muted)" }}
                 >
-                  <div className="flex justify-between mb-1">
-                    <span style={{ color: "#3fb950" }}>LOW</span>
-                    <span className="font-mono">0 – 29</span>
-                  </div>
-                  <div className="flex justify-between mb-1">
-                    <span style={{ color: "#d29922" }}>MEDIUM</span>
-                    <span className="font-mono">30 – 59</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span style={{ color: "#f85149" }}>HIGH</span>
-                    <span className="font-mono">60 – 100</span>
-                  </div>
+                  No analysis yet
+                </div>
+                <div
+                  className="text-xs max-w-xs"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  Select a repository and commit on the left, then click{" "}
+                  <strong style={{ color: "var(--foreground)" }}>
+                    Analyze Risk
+                  </strong>{" "}
+                  to get an AI-powered deployment risk assessment.
                 </div>
               </div>
-            </div>
+            )}
+
+            {/* Session history */}
+            {history.length > 0 && (
+              <div
+                className="rounded-xl p-4 space-y-2"
+                style={{
+                  background: "var(--surface)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <h3
+                    className="text-xs font-semibold uppercase tracking-widest"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Session History
+                  </h3>
+                  <span className="badge text-xs">{history.length}</span>
+                </div>
+                <div className="space-y-1 max-h-72 overflow-y-auto">
+                  {history.map((entry, idx) => (
+                    <HistoryRow
+                      key={`${entry.sha}-${idx}`}
+                      entry={entry}
+                      onSelect={(e) => setResult(e.result)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </main>

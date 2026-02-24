@@ -33,8 +33,9 @@ from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import User
-from app.schemas import GitHubLoginURL, TokenResponse, UserResponse
-from app.services.auth import create_access_token, encrypt_token
+from app.schemas import GitHubLoginURL, GitHubUserRepoItem, TokenResponse, UserResponse
+from app.services.auth import create_access_token, decrypt_token, encrypt_token
+from app.services.github import fetch_user_repos
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 settings = get_settings()
@@ -259,6 +260,67 @@ def get_me(current_user: User = Depends(get_current_user)):
     Requires: ``Authorization: Bearer <jwt>``
     """
     return current_user
+
+
+@router.get(
+    "/github/repos",
+    response_model=list[GitHubUserRepoItem],
+    summary="List the authenticated user's GitHub repositories",
+)
+def list_github_repos(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(100, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Fetches the authenticated user's repositories directly from the GitHub API
+    using their stored (encrypted) OAuth token.
+
+    Requires: ``Authorization: Bearer <jwt>``
+    """
+    if not current_user.access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No GitHub token on file — please re-authenticate.",
+        )
+
+    try:
+        github_token = decrypt_token(current_user.access_token)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not decrypt GitHub token — please re-authenticate.",
+        )
+
+    try:
+        raw = fetch_user_repos(github_token, per_page=per_page, page=page)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to fetch GitHub repositories: {exc}",
+        )
+
+    return [
+        GitHubUserRepoItem(
+            id=r["id"],
+            name=r["name"],
+            full_name=r["full_name"],
+            description=r.get("description"),
+            private=r.get("private", False),
+            html_url=r.get("html_url", ""),
+            language=r.get("language"),
+            stargazers_count=r.get("stargazers_count", 0),
+            forks_count=r.get("forks_count", 0),
+            open_issues_count=r.get("open_issues_count", 0),
+            default_branch=r.get("default_branch", "main"),
+            updated_at=r.get("updated_at"),
+            created_at=r.get("created_at"),
+            topics=r.get("topics") or [],
+            fork=r.get("fork", False),
+            archived=r.get("archived", False),
+        )
+        for r in raw
+    ]
 
 
 @router.post(

@@ -9,17 +9,17 @@ const config: Record<RiskLevel, { label: string; className: string; dot: string 
   LOW: {
     label: "Low",
     className: "risk-low badge",
-    dot: "bg-[#3fb950]",
+    dot: "bg-[#22c55e]",
   },
   MEDIUM: {
     label: "Medium",
     className: "risk-medium badge",
-    dot: "bg-[#d29922]",
+    dot: "bg-[#f59e0b]",
   },
   HIGH: {
     label: "High",
     className: "risk-high badge",
-    dot: "bg-[#f85149]",
+    dot: "bg-[#ef4444]",
   },
 };
 

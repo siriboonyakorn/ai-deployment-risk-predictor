@@ -82,6 +82,38 @@ def fetch_repo_metadata(
         return resp.json()
 
 
+def fetch_user_repos(
+    token: str,
+    per_page: int = 100,
+    page: int = 1,
+    sort: str = "updated",
+    affiliation: str = "owner,collaborator,organization_member",
+) -> list[dict]:
+    """
+    Fetch the authenticated user's GitHub repositories.
+
+    Returns a list of raw GitHub repo objects.
+
+    Raises:
+        httpx.HTTPStatusError: on 4xx/5xx responses.
+    """
+    params: dict[str, str | int] = {
+        "per_page": per_page,
+        "page": page,
+        "sort": sort,
+        "affiliation": affiliation,
+    }
+
+    with httpx.Client(timeout=15) as client:
+        resp = client.get(
+            f"{GITHUB_API}/user/repos",
+            headers=_default_headers(token),
+            params=params,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
 def fetch_commit_history(
     owner: str,
     repo: str,

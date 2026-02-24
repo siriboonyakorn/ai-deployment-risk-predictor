@@ -33,12 +33,12 @@ function CallbackHandler() {
         className="flex items-center justify-center min-h-screen"
         style={{ background: "var(--background)" }}
       >
-        <div className="card p-8 flex flex-col items-center gap-4 max-w-sm w-full text-center">
+        <div className="card-elevated p-8 flex flex-col items-center gap-4 max-w-sm w-full text-center">
           <div
             className="w-10 h-10 rounded-full flex items-center justify-center"
-            style={{ background: "rgba(248,81,73,0.12)", border: "1px solid rgba(248,81,73,0.3)" }}
+            style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)" }}
           >
-            <svg width="18" height="18" viewBox="0 0 16 16" fill="#f85149">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="#ef4444">
               <path d="M4.47.22A.749.749 0 0 1 5 0h6c.199 0 .389.079.53.22l4.25 4.25c.141.14.22.331.22.53v6a.749.749 0 0 1-.22.53l-4.25 4.25A.749.749 0 0 1 11 16H5a.749.749 0 0 1-.53-.22L.22 11.53A.749.749 0 0 1 0 11V5c0-.199.079-.389.22-.53Zm.84 1.28L1.5 5.31v5.38l3.81 3.81h5.38l3.81-3.81V5.31L10.69 1.5ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" />
             </svg>
           </div>

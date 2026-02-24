@@ -46,6 +46,25 @@ export interface AuthUser {
   created_at: string;
 }
 
+export interface GitHubUserRepo {
+  id: number;
+  name: string;
+  full_name: string;
+  description: string | null;
+  private: boolean;
+  html_url: string;
+  language: string | null;
+  stargazers_count: number;
+  forks_count: number;
+  open_issues_count: number;
+  default_branch: string;
+  updated_at: string | null;
+  created_at: string | null;
+  topics: string[];
+  fork: boolean;
+  archived: boolean;
+}
+
 export interface HealthResponse {
   status: string;
   version: string;
@@ -124,6 +143,16 @@ export interface RiskAssessment {
   created_at: string;
 }
 
+export interface RiskPredictionRequest {
+  sha: string;
+  repository_full_name: string;
+  lines_added?: number;
+  lines_deleted?: number;
+  files_changed?: number;
+  commit_message?: string | null;
+  author_email?: string | null;
+}
+
 export interface RiskPredictionResponse {
   commit: {
     id: number;
@@ -153,6 +182,8 @@ export const api = {
       request<AuthUser>("/auth/me"),
     logout: () =>
       request<{ message: string }>("/auth/logout", { method: "POST" }),
+    githubRepos: (page = 1, per_page = 100) =>
+      request<GitHubUserRepo[]>(`/auth/github/repos?page=${page}&per_page=${per_page}`),
   },
 
   repositories: {
@@ -182,5 +213,10 @@ export const api = {
   predictions: {
     get: (sha: string) =>
       request<RiskPredictionResponse>(`/predictions/${sha}`),
+    create: (payload: RiskPredictionRequest) =>
+      request<RiskPredictionResponse>('/predictions', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
   },
 };

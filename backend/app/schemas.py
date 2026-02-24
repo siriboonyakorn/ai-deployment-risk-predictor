@@ -229,3 +229,27 @@ class TokenResponse(BaseModel):
 class GitHubLoginURL(BaseModel):
     """Returned by GET /auth/github/login so clients can redirect themselves."""
     url: str
+
+
+# ---------------------------------------------------------------------------
+# GitHub User Repos listing
+# ---------------------------------------------------------------------------
+
+class GitHubUserRepoItem(BaseModel):
+    """A single repository from GET /user/repos."""
+    id: int
+    name: str
+    full_name: str
+    description: Optional[str] = None
+    private: bool
+    html_url: str
+    language: Optional[str] = None
+    stargazers_count: int = 0
+    forks_count: int = 0
+    open_issues_count: int = 0
+    default_branch: str = "main"
+    updated_at: Optional[str] = None
+    created_at: Optional[str] = None
+    topics: list[str] = []
+    fork: bool = False
+    archived: bool = False
