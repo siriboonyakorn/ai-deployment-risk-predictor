@@ -11,7 +11,7 @@ async function request<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const token = getToken();
+  const token = await getToken();
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {

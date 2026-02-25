@@ -2,8 +2,8 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import Sidebar from "@/components/Sidebar";
-import { isAuthenticated } from "@/lib/auth";
 
 export default function DashboardLayout({
   children,
@@ -11,15 +11,16 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const { isLoaded, isSignedIn } = useAuth();
 
   useEffect(() => {
-    if (!isAuthenticated()) {
+    if (isLoaded && !isSignedIn) {
       router.replace("/login");
     }
-  }, [router]);
+  }, [isLoaded, isSignedIn, router]);
 
-  // Don't render anything while redirecting unauthenticated users
-  if (typeof window !== "undefined" && !isAuthenticated()) {
+  // Show nothing while Clerk loads or while redirecting unauthenticated users
+  if (!isLoaded || !isSignedIn) {
     return null;
   }
 

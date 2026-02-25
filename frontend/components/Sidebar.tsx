@@ -2,9 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
-import { api, AuthUser } from "@/lib/api";
-import { logout } from "@/lib/auth";
+import { useClerk, useUser } from "@clerk/nextjs";
 
 // ---------------------------------------------------------------------------
 // Icons (inline SVG — all 16×16)
@@ -79,11 +77,10 @@ const comingSoon = [
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const { user } = useUser();
+  const { signOut } = useClerk();
 
-  useEffect(() => {
-    api.auth.me().then(setUser).catch(() => setUser(null));
-  }, []);
+  const handleSignOut = () => signOut({ redirectUrl: "/login" });
 
   const isActive = (href: string) =>
     href === "/dashboard"
@@ -177,11 +174,11 @@ export default function Sidebar() {
           className="border-t px-3 py-3 flex items-center gap-2.5"
           style={{ borderColor: "var(--border-subtle)" }}
         >
-          {user.avatar_url ? (
+          {user.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={user.avatar_url}
-              alt={user.username}
+              src={user.imageUrl}
+              alt={user.username ?? user.firstName ?? "User"}
               width={30}
               height={30}
               className="rounded-full flex-shrink-0"
@@ -192,21 +189,21 @@ export default function Sidebar() {
               className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
               style={{ background: "linear-gradient(135deg,#3b82f6,#1d4ed8)", color: "#fff" }}
             >
-              {user.username[0].toUpperCase()}
+              {(user.firstName ?? user.username ?? "U")[0].toUpperCase()}
             </div>
           )}
           <div className="flex-1 min-w-0">
             <div className="text-xs font-semibold truncate" style={{ color: "var(--foreground)" }}>
-              {user.username}
+              {user.fullName ?? user.username ?? user.firstName}
             </div>
-            {user.email && (
+            {user.primaryEmailAddress && (
               <div className="text-[10px] truncate" style={{ color: "var(--text-muted)" }}>
-                {user.email}
+                {user.primaryEmailAddress.emailAddress}
               </div>
             )}
           </div>
           <button
-            onClick={logout}
+            onClick={handleSignOut}
             title="Sign out"
             className="flex-shrink-0 p-1.5 rounded-lg transition-colors cursor-pointer"
             style={{ color: "var(--text-muted)" }}

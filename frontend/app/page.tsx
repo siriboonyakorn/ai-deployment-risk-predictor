@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { isAuthenticated, initiateGitHubLogin } from "@/lib/auth";
+import { useAuth, useSignIn } from "@clerk/nextjs";
 
 // ---------------------------------------------------------------------------
 // Risk preview widget — animates through fake commits
@@ -244,13 +244,22 @@ const STEPS = [
 
 export default function HomePage() {
   const router = useRouter();
-  const [authed, setAuthed] = useState(false);
+  const { isSignedIn } = useAuth();
+  const { signIn } = useSignIn();
+
+  const handleSignIn = async () => {
+    await signIn?.authenticateWithRedirect({
+      strategy: "oauth_github",
+      redirectUrl: "/sso-callback",
+      redirectUrlComplete: "/dashboard",
+    });
+  };
 
   // Must run after hydration so server and client initial renders match.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setAuthed(isAuthenticated());
-  }, []);
+    // redirect already-authenticated users to the dashboard
+    if (isSignedIn) router.prefetch("/dashboard");
+  }, [isSignedIn, router]);
 
   return (
     <div
@@ -287,7 +296,7 @@ export default function HomePage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {authed ? (
+          {isSignedIn ? (
             <button
               onClick={() => router.push("/dashboard")}
               className="btn-primary px-4 py-1.5 text-sm"
@@ -296,7 +305,7 @@ export default function HomePage() {
             </button>
           ) : (
             <button
-              onClick={initiateGitHubLogin}
+              onClick={handleSignIn}
               className="btn-primary px-4 py-1.5 text-sm flex items-center gap-2"
             >
               <svg
@@ -372,7 +381,7 @@ export default function HomePage() {
               </p>
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
-                {authed ? (
+                {isSignedIn ? (
                   <button
                     onClick={() => router.push("/dashboard")}
                     className="btn-primary px-6 py-3 text-sm font-semibold"
@@ -382,7 +391,7 @@ export default function HomePage() {
                 ) : (
                   <>
                     <button
-                      onClick={initiateGitHubLogin}
+                      onClick={handleSignIn}
                       className="btn-primary px-6 py-3 text-sm font-semibold flex items-center justify-center gap-2"
                     >
                       <svg
@@ -543,7 +552,7 @@ export default function HomePage() {
               Join developers who check risk scores before every deploy.
             </p>
           </div>
-          {authed ? (
+          {isSignedIn ? (
             <button
               onClick={() => router.push("/dashboard")}
               className="btn-primary px-6 py-2.5 text-sm font-semibold flex-shrink-0"
@@ -552,7 +561,7 @@ export default function HomePage() {
             </button>
           ) : (
             <button
-              onClick={initiateGitHubLogin}
+              onClick={handleSignIn}
               className="btn-primary px-6 py-2.5 text-sm font-semibold flex-shrink-0 flex items-center gap-2"
             >
               <svg

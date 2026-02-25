@@ -29,13 +29,15 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    github_id: int
+    github_id: Optional[int] = None
+    google_id: Optional[str] = None
     access_token: str
 
 
 class UserResponse(UserBase):
     id: int
-    github_id: int
+    github_id: Optional[int] = None
+    google_id: Optional[str] = None
     is_active: bool
     created_at: datetime
 

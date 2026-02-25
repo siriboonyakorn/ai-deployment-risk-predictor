@@ -48,6 +48,11 @@ GITHUB_EMAILS_URL = "https://api.github.com/user/emails"
 # Scopes: read user profile, access email, and (optionally) read repos for webhooks
 GITHUB_SCOPES = "read:user user:email repo"
 
+GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USER_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+GOOGLE_SCOPES = "openid email profile"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -337,3 +342,177 @@ def logout(_: User = Depends(get_current_user)):
     added in a future iteration.
     """
     return {"message": "Logged out successfully. Please discard your token."}
+
+
+# ---------------------------------------------------------------------------
+# Google OAuth helpers
+# ---------------------------------------------------------------------------
+
+def _google_redirect_uri() -> str:
+    """Return the callback URL registered with Google OAuth."""
+    # Use GOOGLE_REDIRECT_URI if set, otherwise derive from FRONTEND_URL.
+    # Google redirects the browser here after the user approves the app.
+    # The Next.js rewrite proxies /api/v1/* → backend, so using the
+    # frontend origin works for local dev and deployed environments alike.
+    custom = getattr(settings, "GOOGLE_REDIRECT_URI", "")
+    if custom:
+        return custom
+    return f"{settings.FRONTEND_URL.rstrip('/')}/api/v1/auth/google/callback"
+
+
+def _exchange_google_code_for_token(code: str) -> str:
+    """POST the OAuth code to Google and return the raw access token string."""
+    redirect_uri = _google_redirect_uri()
+    with httpx.Client(timeout=15) as client:
+        resp = client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
+    resp.raise_for_status()
+    data = resp.json()
+    token = data.get("access_token")
+    if not token:
+        error = data.get("error_description") or data.get("error") or "Unknown error"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Google OAuth error: {error}",
+        )
+    return token
+
+
+def _fetch_google_user(access_token: str) -> dict:
+    """Fetch the authenticated user's profile from Google."""
+    with httpx.Client(timeout=15) as client:
+        resp = client.get(
+            GOOGLE_USER_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        resp.raise_for_status()
+    return resp.json()
+
+
+def _upsert_google_user(google_profile: dict, access_token: str, db: Session) -> User:
+    """
+    Create or update a User record from Google profile data.
+    Uses `sub` (Google's stable user ID) as the lookup key.
+    """
+    encrypted = encrypt_token(access_token)
+    google_id = str(google_profile["sub"])
+    email = google_profile.get("email")
+    name = google_profile.get("name") or ""
+    picture = google_profile.get("picture")
+
+    # Derive a username from the email prefix or name
+    username_base = (email.split("@")[0] if email else name.replace(" ", "").lower()) or f"google_{google_id}"
+
+    user = db.query(User).filter(User.google_id == google_id).first()
+
+    if user:
+        user.email = email or user.email
+        user.avatar_url = picture or user.avatar_url
+        user.access_token = encrypted
+        user.is_active = True
+    else:
+        # Ensure username is unique by appending a suffix if needed
+        username = username_base
+        suffix = 1
+        while db.query(User).filter(User.username == username).first():
+            username = f"{username_base}{suffix}"
+            suffix += 1
+
+        user = User(
+            google_id=google_id,
+            username=username,
+            email=email,
+            avatar_url=picture,
+            access_token=encrypted,
+            is_active=True,
+        )
+        db.add(user)
+
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Google OAuth endpoints
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/google/login/redirect",
+    summary="Redirect browser directly to Google OAuth",
+    include_in_schema=True,
+)
+def google_login_redirect():
+    """Immediately redirects the browser to Google's OAuth consent screen."""
+    if not settings.GOOGLE_CLIENT_ID:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google OAuth is not configured. Set GOOGLE_CLIENT_ID in .env.",
+        )
+
+    redirect_uri = _google_redirect_uri()
+    params = urlencode({
+        "client_id": settings.GOOGLE_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": GOOGLE_SCOPES,
+        "access_type": "offline",
+        "prompt": "select_account",
+    })
+    return RedirectResponse(url=f"{GOOGLE_AUTHORIZE_URL}?{params}")
+
+
+@router.get(
+    "/google/callback",
+    summary="Google OAuth callback — exchanges code for JWT",
+)
+def google_callback(
+    code: str = Query(..., description="OAuth code provided by Google"),
+    db: Session = Depends(get_db),
+):
+    """
+    Google redirects here after the user authorises the app.
+
+    Steps:
+    1. Exchange ``code`` for a Google access token.
+    2. Fetch Google user profile.
+    3. Upsert user record in the database (token stored encrypted).
+    4. Issue a signed JWT.
+    5. Redirect the frontend to ``{FRONTEND_URL}/auth/callback?token=<jwt>``.
+    """
+    if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CLIENT_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google OAuth is not configured on the server.",
+        )
+
+    try:
+        google_access_token = _exchange_google_code_for_token(code)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to contact Google: {exc}",
+        )
+
+    try:
+        google_user = _fetch_google_user(google_access_token)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to fetch Google user: {exc}",
+        )
+
+    user = _upsert_google_user(google_user, google_access_token, db)
+    jwt_token = create_access_token(subject=user.id)
+
+    redirect_url = f"{settings.FRONTEND_URL}/auth/callback?token={jwt_token}"
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+

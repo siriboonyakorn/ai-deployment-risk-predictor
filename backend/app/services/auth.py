@@ -102,3 +102,58 @@ def get_user_id_from_token(token: str) -> int:
     if sub is None:
         raise ValueError("JWT is missing 'sub' claim.")
     return int(sub)
+
+
+# ---------------------------------------------------------------------------
+# Clerk JWT verification
+# ---------------------------------------------------------------------------
+
+_clerk_jwks_cache: dict | None = None
+_clerk_jwks_issuer: str | None = None
+
+
+def _fetch_clerk_jwks(issuer: str) -> dict:
+    """Fetch (and cache) the JWKS for a given Clerk issuer URL."""
+    global _clerk_jwks_cache, _clerk_jwks_issuer
+    if _clerk_jwks_cache is not None and _clerk_jwks_issuer == issuer:
+        return _clerk_jwks_cache
+
+    import httpx
+    jwks_url = f"{issuer.rstrip('/')}/.well-known/jwks.json"
+    response = httpx.get(jwks_url, timeout=10)
+    response.raise_for_status()
+    _clerk_jwks_cache = response.json()
+    _clerk_jwks_issuer = issuer
+    return _clerk_jwks_cache
+
+
+def verify_clerk_token(token: str) -> dict:
+    """
+    Verify a Clerk-issued JWT and return its claims.
+
+    Steps:
+    1. Decode without verification to extract the ``iss`` (issuer) claim.
+    2. Fetch the issuer's JWKS public keys (cached in memory).
+    3. Verify the JWT signature, expiry, and issuer.
+
+    Raises:
+        JWTError: if the token is invalid, expired, tampered, or the JWKS
+                  cannot be fetched.
+        ValueError: if required claims are missing.
+    """
+    unverified_claims = jwt.get_unverified_claims(token)
+    issuer = unverified_claims.get("iss", "")
+    if not issuer:
+        raise ValueError("Clerk JWT is missing the 'iss' claim.")
+
+    jwks = _fetch_clerk_jwks(issuer)
+
+    # Clerk tokens use RS256; audience is not always set so we skip that check
+    payload = jwt.decode(
+        token,
+        jwks,
+        algorithms=["RS256"],
+        issuer=issuer,
+        options={"verify_aud": False},
+    )
+    return payload

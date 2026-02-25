@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     GITHUB_CLIENT_SECRET: str = ""
     GITHUB_WEBHOOK_SECRET: str = ""
 
+    # Google OAuth
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = ""  # Optional override; derived from FRONTEND_URL if blank
+
+    # Clerk Authentication
+    CLERK_SECRET_KEY: str = ""  # sk_live_... or sk_test_... from Clerk dashboard
+
     # GitHub API (Personal Access Token for fetching repo data)
     GITHUB_TOKEN: str = ""
 

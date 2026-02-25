@@ -1,62 +1,32 @@
 /**
- * Client-side auth utilities.
- * JWT is stored in localStorage under AUTH_TOKEN_KEY.
+ * Client-side auth utilities — powered by Clerk.
+ *
+ * Clerk manages the session lifecycle (sign-in, sign-up, token refresh).
+ * We expose an async getToken() that returns the current Clerk session JWT
+ * so lib/api.ts can attach it to every backend request without coupling to
+ * React hooks.
+ *
+ * registerClerkTokenGetter() is called once by <ClerkTokenSync> (mounted in
+ * the root layout) to wire Clerk's getToken into this module.
  */
 
-const AUTH_TOKEN_KEY = "auth_token";
+type ClerkTokenGetter = () => Promise<string | null>;
 
-export interface AuthUser {
-  id: number;
-  username: string;
-  email: string | null;
-  avatar_url: string | null;
-  is_active: boolean;
-  created_at: string;
+let _clerkGetToken: ClerkTokenGetter | null = null;
+
+/**
+ * Called by <ClerkTokenSync> once the ClerkProvider is mounted.
+ * Registers Clerk's hook-based getToken() for use outside React components.
+ */
+export function registerClerkTokenGetter(fn: ClerkTokenGetter): void {
+  _clerkGetToken = fn;
 }
 
-// ---------------------------------------------------------------------------
-// Token storage
-// ---------------------------------------------------------------------------
-
-export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(AUTH_TOKEN_KEY);
-}
-
-export function setToken(token: string): void {
-  localStorage.setItem(AUTH_TOKEN_KEY, token);
-}
-
-export function clearToken(): void {
-  localStorage.removeItem(AUTH_TOKEN_KEY);
-}
-
-export function isAuthenticated(): boolean {
-  const token = getToken();
-  if (!token) return false;
-
-  // Peek at the JWT expiry without a library — decode the payload (base64)
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return false;
-    const payload = JSON.parse(atob(parts[1]));
-    if (!payload.exp) return true; // no expiry claim → treat as valid
-    return payload.exp * 1000 > Date.now();
-  } catch {
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Login / logout
-// ---------------------------------------------------------------------------
-
-export function initiateGitHubLogin(): void {
-  // Redirect browser to backend which then redirects to GitHub
-  window.location.href = "/api/v1/auth/github/login/redirect";
-}
-
-export function logout(): void {
-  clearToken();
-  window.location.href = "/login";
+/**
+ * Returns the current Clerk session JWT, or null when not signed in.
+ * Used by lib/api.ts to attach Authorization headers.
+ */
+export async function getToken(): Promise<string | null> {
+  if (_clerkGetToken) return _clerkGetToken();
+  return null;
 }
