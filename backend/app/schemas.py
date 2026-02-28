@@ -197,6 +197,14 @@ class CommitHistoryResponse(BaseModel):
     commits_fetched: int
 
 
+class CommitSyncResponse(BaseModel):
+    """Response for POST /repositories/{repo_id}/sync-commits."""
+    repository_id: int
+    full_name: str
+    commits_synced: int
+    commits: list["CommitResponse"]
+
+
 # ---------------------------------------------------------------------------
 # GitHub Webhook
 # ---------------------------------------------------------------------------

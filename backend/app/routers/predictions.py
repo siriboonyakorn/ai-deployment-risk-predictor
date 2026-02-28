@@ -1,10 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
+
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.exceptions import NotFoundError
 from app.models import Commit, Repository, RiskAssessment, RiskLevel
 from app.schemas import RiskPredictionRequest, RiskPredictionResponse
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/predictions", tags=["Predictions"])
 
 
@@ -67,10 +71,7 @@ def predict_risk(payload: RiskPredictionRequest, db: Session = Depends(get_db)):
     ).first()
 
     if not repo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Repository '{payload.repository_full_name}' not found. Connect it first.",
-        )
+        raise NotFoundError("Repository", payload.repository_full_name)
 
     # Upsert commit
     commit = db.query(Commit).filter(
@@ -121,6 +122,10 @@ def predict_risk(payload: RiskPredictionRequest, db: Session = Depends(get_db)):
     db.refresh(commit)
     db.refresh(assessment)
 
+    logger.info(
+        "Risk prediction for %s: score=%.1f level=%s",
+        payload.sha[:7], risk_score, risk_level.value,
+    )
     return RiskPredictionResponse(commit=commit, assessment=assessment)
 
 
@@ -130,9 +135,6 @@ def get_prediction(commit_sha: str, db: Session = Depends(get_db)):
     commit = db.query(Commit).filter(Commit.sha == commit_sha).first()
 
     if not commit or not commit.risk_assessment:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No risk assessment found for commit '{commit_sha}'.",
-        )
+        raise NotFoundError("Risk assessment", commit_sha)
 
     return RiskPredictionResponse(commit=commit, assessment=commit.risk_assessment)

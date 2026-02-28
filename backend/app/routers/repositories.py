@@ -1,12 +1,21 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-import httpx
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import Repository
+from app.exceptions import (
+    ConflictError,
+    ExternalServiceError,
+    NotFoundError,
+    ValidationError,
+)
+from app.models import Commit, Repository
 from app.schemas import (
     CommitHistoryResponse,
+    CommitResponse,
+    CommitSyncResponse,
     GitHubAuthor,
     GitHubCommitDetail,
     GitHubCommitItem,
@@ -17,12 +26,14 @@ from app.schemas import (
     RepoImportRequest,
     RepoImportResponse,
 )
+from app.services.commit_sync import sync_commits_for_repo
 from app.services.github import (
     fetch_commit_history,
     fetch_repo_metadata,
     parse_github_url,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/repositories", tags=["Repositories"])
 settings = get_settings()
 
@@ -95,10 +106,7 @@ def connect_repository(payload: RepositoryCreate, db: Session = Depends(get_db))
     ).first()
 
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Repository '{payload.full_name}' is already connected.",
-        )
+        raise ConflictError(f"Repository '{payload.full_name}' is already connected.")
 
     repo = Repository(
         github_repo_id=payload.github_repo_id,
@@ -111,6 +119,7 @@ def connect_repository(payload: RepositoryCreate, db: Session = Depends(get_db))
     db.add(repo)
     db.commit()
     db.refresh(repo)
+    logger.info("Connected repository %s", repo.full_name)
     return repo
 
 
@@ -119,10 +128,7 @@ def get_repository(repo_id: int, db: Session = Depends(get_db)):
     """Get a single repository by ID."""
     repo = db.query(Repository).filter(Repository.id == repo_id).first()
     if not repo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Repository with id={repo_id} not found.",
-        )
+        raise NotFoundError("Repository", repo_id)
     return repo
 
 
@@ -131,12 +137,10 @@ def disconnect_repository(repo_id: int, db: Session = Depends(get_db)):
     """Disconnect and remove a repository."""
     repo = db.query(Repository).filter(Repository.id == repo_id).first()
     if not repo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Repository with id={repo_id} not found.",
-        )
+        raise NotFoundError("Repository", repo_id)
     db.delete(repo)
     db.commit()
+    logger.info("Disconnected repository %s", repo.full_name)
     return MessageResponse(message=f"Repository '{repo.full_name}' disconnected.")
 
 
@@ -162,37 +166,13 @@ def import_repository(
     - **github_url**: Full GitHub URL, e.g. `https://github.com/owner/repo`
     - **branch**: Optional branch name. Defaults to the repository's default branch.
     """
-    # 1. Parse URL
-    try:
-        owner, repo_name = parse_github_url(payload.github_url)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    # 1. Parse URL  (raises ValidationError on bad format)
+    owner, repo_name = parse_github_url(payload.github_url)
 
-    token = settings.GITHUB_TOKEN or None
+    token = settings.github_token_or_none
 
-    # 2. Fetch repo metadata from GitHub
-    try:
-        gh_repo = fetch_repo_metadata(owner, repo_name, token=token)
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"GitHub repository '{owner}/{repo_name}' not found or is private.",
-            )
-        if exc.response.status_code == 403:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="GitHub API rate limit exceeded or token lacks permissions.",
-            )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"GitHub API error: {exc.response.status_code}",
-        )
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Could not reach GitHub API: {exc}",
-        )
+    # 2. Fetch repo metadata from GitHub  (raises NotFoundError / ExternalServiceError)
+    gh_repo = fetch_repo_metadata(owner, repo_name, token=token)
 
     # 3. Upsert repository record
     existing = db.query(Repository).filter(
@@ -214,17 +194,17 @@ def import_repository(
         db.commit()
         db.refresh(repo_record)
 
-    # 4. Fetch commit history
+    # 4. Fetch commit history  (non-fatal)
     branch = payload.branch or gh_repo.get("default_branch")
     try:
         raw_commits = fetch_commit_history(owner, repo_name, token=token, branch=branch)
-    except httpx.HTTPStatusError as exc:
-        raw_commits = []  # non-fatal; return repo record even if commits fail
-    except httpx.RequestError:
+    except Exception as exc:
+        logger.warning("Could not fetch commits during import: %s", exc)
         raw_commits = []
 
     commit_items = _build_commit_items(raw_commits)
 
+    logger.info("Imported repository %s (%d commits fetched)", repo_record.full_name, len(commit_items))
     return RepoImportResponse(
         repository=repo_record,
         metadata=_build_metadata(gh_repo),
@@ -259,45 +239,18 @@ def get_commit_history(
     """
     repo = db.query(Repository).filter(Repository.id == repo_id).first()
     if not repo:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Repository with id={repo_id} not found.",
-        )
+        raise NotFoundError("Repository", repo_id)
 
-    # full_name is "owner/repo"
     parts = repo.full_name.split("/", 1)
     if len(parts) != 2:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Stored full_name '{repo.full_name}' is not in 'owner/repo' format.",
-        )
+        raise ValidationError(f"Stored full_name '{repo.full_name}' is not in 'owner/repo' format.")
     owner, repo_name = parts
-    token = settings.GITHUB_TOKEN or None
+    token = settings.github_token_or_none
 
-    try:
-        raw_commits = fetch_commit_history(
-            owner, repo_name, token=token, branch=branch, per_page=per_page, page=page
-        )
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Branch '{branch}' not found in '{repo.full_name}'.",
-            )
-        if exc.response.status_code == 403:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="GitHub API rate limit exceeded or token lacks permissions.",
-            )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"GitHub API error: {exc.response.status_code}",
-        )
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Could not reach GitHub API: {exc}",
-        )
+    # fetch_commit_history raises typed exceptions (NotFoundError, etc.)
+    raw_commits = fetch_commit_history(
+        owner, repo_name, token=token, branch=branch, per_page=per_page, page=page,
+    )
 
     commit_items = _build_commit_items(raw_commits)
 
@@ -310,3 +263,101 @@ def get_commit_history(
         commits=commit_items,
         commits_fetched=len(commit_items),
     )
+
+
+# ---------------------------------------------------------------------------
+# Commit sync — fetch last N commits, extract metrics, persist
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/{repo_id}/sync-commits",
+    response_model=CommitSyncResponse,
+    summary="Sync commit history and metrics into the database",
+)
+def sync_commits(
+    repo_id: int,
+    branch: str = Query(default=None, description="Branch (defaults to repo default branch)"),
+    limit: int = Query(default=None, ge=1, le=500, description="Max commits to sync (default from settings)"),
+    fetch_metrics: bool = Query(default=True, description="Fetch per-commit stats (lines added/deleted, files changed)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Fetch the last *N* commits from GitHub, extract per-commit metrics
+    (lines added, lines deleted, files changed), and store everything in the
+    database.
+
+    Existing commits (matched by SHA) are skipped.  New commits are
+    persisted together with their metrics.
+
+    - **repo_id**: Internal repository ID.
+    - **branch**: Branch to query (omit for default branch).
+    - **limit**: Override the default fetch limit (``COMMIT_FETCH_LIMIT``).
+    - **fetch_metrics**: When ``true`` (default), an extra API call per
+      commit is made to retrieve stats.  Set to ``false`` for a faster sync
+      without metrics.
+    """
+    repo = db.query(Repository).filter(Repository.id == repo_id).first()
+    if not repo:
+        raise NotFoundError("Repository", repo_id)
+
+    commits = sync_commits_for_repo(
+        repo, db, branch=branch, limit=limit, fetch_metrics=fetch_metrics,
+    )
+
+    return CommitSyncResponse(
+        repository_id=repo.id,
+        full_name=repo.full_name,
+        commits_synced=len(commits),
+        commits=[
+            CommitResponse(
+                id=c.id,
+                sha=c.sha,
+                message=c.message,
+                author_name=c.author_name,
+                author_email=c.author_email,
+                lines_added=c.lines_added,
+                lines_deleted=c.lines_deleted,
+                files_changed=c.files_changed,
+                committed_at=c.committed_at,
+                repository_id=c.repository_id,
+                created_at=c.created_at,
+            )
+            for c in commits
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# List stored commits from DB
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{repo_id}/stored-commits",
+    response_model=list[CommitResponse],
+    summary="List commits stored in the database for a repository",
+)
+def list_stored_commits(
+    repo_id: int,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """
+    Return commits that have already been synced to the database.
+
+    Unlike ``GET /{repo_id}/commits`` (which queries GitHub live), this
+    endpoint reads from the local store and includes persisted metrics.
+    """
+    repo = db.query(Repository).filter(Repository.id == repo_id).first()
+    if not repo:
+        raise NotFoundError("Repository", repo_id)
+
+    commits = (
+        db.query(Commit)
+        .filter(Commit.repository_id == repo.id)
+        .order_by(Commit.committed_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return commits

@@ -1,16 +1,17 @@
 import hashlib
 import hmac
 import json
+import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import Commit, Repository
+from app.models import Commit, Repository, RiskAssessment
 from app.routers.predictions import _calculate_risk
-from app.models import RiskAssessment
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 settings = get_settings()
 
@@ -18,7 +19,8 @@ settings = get_settings()
 def _verify_signature(payload: bytes, signature: str) -> bool:
     """Validate GitHub HMAC-SHA256 webhook signature."""
     if not settings.GITHUB_WEBHOOK_SECRET:
-        return True  # skip in dev when secret is not set
+        logger.debug("GITHUB_WEBHOOK_SECRET not set — skipping signature check")
+        return True
 
     expected = "sha256=" + hmac.new(
         settings.GITHUB_WEBHOOK_SECRET.encode(),
@@ -45,6 +47,7 @@ async def github_webhook(
         )
 
     if x_github_event != "push":
+        logger.debug("Ignoring GitHub event: %s", x_github_event)
         return {"message": f"Event '{x_github_event}' ignored."}
 
     payload = json.loads(body)
@@ -111,4 +114,5 @@ async def github_webhook(
         processed.append({"sha": sha[:7], "risk_score": risk_score, "risk_level": risk_level})
 
     db.commit()
+    logger.info("Webhook processed %d commits for %s", len(processed), repo_full_name)
     return {"message": "Webhook processed.", "commits": processed}

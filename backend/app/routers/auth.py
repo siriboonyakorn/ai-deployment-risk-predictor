@@ -349,15 +349,12 @@ def logout(_: User = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 def _google_redirect_uri() -> str:
-    """Return the callback URL registered with Google OAuth."""
-    # Use GOOGLE_REDIRECT_URI if set, otherwise derive from FRONTEND_URL.
-    # Google redirects the browser here after the user approves the app.
-    # The Next.js rewrite proxies /api/v1/* → backend, so using the
-    # frontend origin works for local dev and deployed environments alike.
-    custom = getattr(settings, "GOOGLE_REDIRECT_URI", "")
-    if custom:
-        return custom
-    return f"{settings.FRONTEND_URL.rstrip('/')}/api/v1/auth/google/callback"
+    """Return the callback URL registered with Google OAuth.
+
+    Uses the GOOGLE_REDIRECT_URI setting, which is auto-derived from
+    FRONTEND_URL when left blank (see Settings model_validator).
+    """
+    return settings.GOOGLE_REDIRECT_URI
 
 
 def _exchange_google_code_for_token(code: str) -> str:
