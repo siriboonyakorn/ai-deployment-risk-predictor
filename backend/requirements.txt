@@ -17,6 +17,9 @@ passlib[bcrypt]>=1.7.4
 cryptography>=42.0.0
 httpx>=0.28.1
 
+# Code analysis
+radon>=6.0.1
+
 # Background jobs
 redis>=5.2.1
 celery>=5.4.0

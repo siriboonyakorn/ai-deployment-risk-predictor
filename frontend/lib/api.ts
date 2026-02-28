@@ -169,6 +169,80 @@ export interface RiskPredictionResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Dashboard Stats
+// ---------------------------------------------------------------------------
+
+export interface DashboardStats {
+  total_repositories: number;
+  total_commits: number;
+  total_assessments: number;
+  risk_counts: { LOW: number; MEDIUM: number; HIGH: number };
+  avg_risk_score: number | null;
+  high_risk_count: number;
+  recent_commits_24h: number;
+  recent_high_risk_24h: number;
+}
+
+export interface RiskDistributionEntry {
+  level: string;
+  count: number;
+  percentage: number;
+}
+
+export interface ScoreHistogramBucket {
+  range: string;
+  count: number;
+}
+
+export interface RiskDistributionResponse {
+  distribution: RiskDistributionEntry[];
+  total: number;
+  score_histogram: ScoreHistogramBucket[];
+}
+
+export interface RecentActivityItem {
+  sha: string;
+  message: string;
+  author_email: string | null;
+  author_name: string | null;
+  risk_score: number;
+  risk_level: RiskLevel;
+  confidence: number | null;
+  model_version: string;
+  repository_full_name: string | null;
+  committed_at: string | null;
+  analyzed_at: string | null;
+}
+
+export interface CommitWithRisk {
+  id: number;
+  sha: string;
+  message: string;
+  author_name: string | null;
+  author_email: string | null;
+  lines_added: number;
+  lines_deleted: number;
+  files_changed: number;
+  avg_cyclomatic_complexity: number | null;
+  complexity_rank: string | null;
+  repository_id: number;
+  repository_full_name: string | null;
+  committed_at: string | null;
+  created_at: string | null;
+  risk_score: number | null;
+  risk_level: RiskLevel | null;
+  confidence: number | null;
+  model_version: string | null;
+}
+
+export interface CommitsWithRiskResponse {
+  items: CommitWithRisk[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+// ---------------------------------------------------------------------------
 // API methods
 // ---------------------------------------------------------------------------
 
@@ -218,5 +292,39 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       }),
+    list: (skip = 0, limit = 50) =>
+      request<RiskPredictionResponse[]>(`/predictions?skip=${skip}&limit=${limit}`),
+  },
+
+  dashboard: {
+    stats: () =>
+      request<DashboardStats>("/dashboard/stats"),
+    riskDistribution: () =>
+      request<RiskDistributionResponse>("/dashboard/risk-distribution"),
+    recentActivity: (limit = 10) =>
+      request<{ items: RecentActivityItem[]; count: number }>(
+        `/dashboard/recent-activity?limit=${limit}`
+      ),
+    commitsWithRisk: (params: {
+      skip?: number;
+      limit?: number;
+      risk_level?: string;
+      sort_by?: string;
+      sort_order?: string;
+      search?: string;
+      repo_id?: number;
+    } = {}) => {
+      const qs = new URLSearchParams();
+      if (params.skip != null) qs.set("skip", String(params.skip));
+      if (params.limit != null) qs.set("limit", String(params.limit));
+      if (params.risk_level) qs.set("risk_level", params.risk_level);
+      if (params.sort_by) qs.set("sort_by", params.sort_by);
+      if (params.sort_order) qs.set("sort_order", params.sort_order);
+      if (params.search) qs.set("search", params.search);
+      if (params.repo_id != null) qs.set("repo_id", String(params.repo_id));
+      return request<CommitsWithRiskResponse>(
+        `/dashboard/commits-with-risk?${qs}`
+      );
+    },
   },
 };

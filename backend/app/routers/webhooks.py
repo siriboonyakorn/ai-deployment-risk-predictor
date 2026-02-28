@@ -9,11 +9,24 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import get_db
 from app.models import Commit, Repository, RiskAssessment
-from app.routers.predictions import _calculate_risk
+from app.services.risk_engine import extract_features
+from app.ml.predictor import predictor
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 settings = get_settings()
+
+
+def _is_celery_available() -> bool:
+    """Return True if Redis/Celery is reachable for async task dispatch."""
+    try:
+        from app.celery_app import celery as celery_app
+        conn = celery_app.connection()
+        conn.connect()
+        conn.close()
+        return True
+    except Exception:
+        return False
 
 
 def _verify_signature(payload: bytes, signature: str) -> bool:
@@ -68,6 +81,8 @@ async def github_webhook(
         db.flush()
 
     processed = []
+    async_ids = []  # commit IDs to analyse in background
+
     for commit_data in commits_data:
         sha = commit_data.get("id", "")
         added = len(commit_data.get("added", []))
@@ -87,17 +102,25 @@ async def github_webhook(
                 author_name=commit_data.get("author", {}).get("name"),
                 author_email=commit_data.get("author", {}).get("email"),
                 files_changed=added + removed + modified,
+                lines_added=added,
+                lines_deleted=removed,
                 repository_id=repo.id,
             )
             db.add(commit)
             db.flush()
 
-        risk_score, risk_level, confidence = _calculate_risk(
+        # Quick synchronous scoring (instant response)
+        features = extract_features(
+            commit_message=message,
+            files_changed=added + removed + modified,
             lines_added=added,
             lines_deleted=removed,
-            files_changed=added + removed + modified,
-            commit_message=message,
         )
+        pred = predictor.predict(features)
+        risk_score = pred["risk_score"]
+        risk_level = pred["risk_level"]
+        confidence = pred["confidence"]
+        model_version = pred.get("model_version", "rule-v1")
 
         existing = db.query(RiskAssessment).filter(
             RiskAssessment.commit_id == commit.id
@@ -109,10 +132,24 @@ async def github_webhook(
                 risk_score=risk_score,
                 risk_level=risk_level,
                 confidence=confidence,
+                model_version=model_version,
             ))
+
+        # Collect IDs for deeper async analysis (radon + file fetch)
+        async_ids.append(commit.id)
 
         processed.append({"sha": sha[:7], "risk_score": risk_score, "risk_level": risk_level})
 
     db.commit()
+
+    # Dispatch background analysis for complexity if Celery is available
+    if async_ids and _is_celery_available():
+        try:
+            from app.tasks.analysis import analyze_commits_batch
+            analyze_commits_batch.delay(async_ids, repo_full_name)
+            logger.info("Dispatched async analysis for %d commits", len(async_ids))
+        except Exception as exc:
+            logger.warning("Could not dispatch async tasks: %s", exc)
+
     logger.info("Webhook processed %d commits for %s", len(processed), repo_full_name)
     return {"message": "Webhook processed.", "commits": processed}

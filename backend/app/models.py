@@ -76,6 +76,11 @@ class Commit(Base):
     lines_added = Column(Integer, default=0)
     lines_deleted = Column(Integer, default=0)
     files_changed = Column(Integer, default=0)
+    # Complexity metrics (populated by radon analysis)
+    avg_cyclomatic_complexity = Column(Float, nullable=True)
+    max_cyclomatic_complexity = Column(Float, nullable=True)
+    avg_maintainability_index = Column(Float, nullable=True)
+    complexity_rank = Column(String(2), nullable=True)  # A-F
     repository_id = Column(Integer, ForeignKey("repositories.id"), nullable=False)
     committed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -96,7 +101,8 @@ class RiskAssessment(Base):
     risk_level = Column(Enum(RiskLevel), nullable=False)
     confidence = Column(Float, nullable=True)  # 0.0 – 1.0
     features_json = Column(Text, nullable=True)  # raw ML features (JSON string)
-    model_version = Column(String(50), default="v1")
+    score_breakdown_json = Column(Text, nullable=True)  # per-category score breakdown
+    model_version = Column(String(50), default="rule-v1")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     commit = relationship("Commit", back_populates="risk_assessment")

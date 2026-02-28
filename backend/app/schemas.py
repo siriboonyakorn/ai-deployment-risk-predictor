@@ -83,6 +83,10 @@ class CommitBase(BaseModel):
     lines_added: int = 0
     lines_deleted: int = 0
     files_changed: int = 0
+    avg_cyclomatic_complexity: Optional[float] = None
+    max_cyclomatic_complexity: Optional[float] = None
+    avg_maintainability_index: Optional[float] = None
+    complexity_rank: Optional[str] = None
     committed_at: Optional[datetime] = None
 
 
@@ -111,6 +115,7 @@ class RiskPredictionRequest(BaseModel):
     files_changed: int = 0
     commit_message: Optional[str] = None
     author_email: Optional[str] = None
+    analyze_complexity: bool = True  # run radon analysis on changed files
 
 
 class RiskAssessmentResponse(BaseModel):
@@ -119,6 +124,8 @@ class RiskAssessmentResponse(BaseModel):
     risk_score: float  # 0.0 – 100.0
     risk_level: RiskLevel
     confidence: Optional[float] = None
+    features_json: Optional[str] = None      # full ML features
+    score_breakdown_json: Optional[str] = None  # per-category breakdown
     model_version: str
     created_at: datetime
 

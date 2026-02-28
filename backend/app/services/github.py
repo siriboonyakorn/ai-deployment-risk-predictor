@@ -219,3 +219,103 @@ def fetch_commits_paginated(
         len(collected), owner, repo, total,
     )
     return collected[:total]
+
+
+def fetch_file_content(
+    owner: str,
+    repo: str,
+    path: str,
+    ref: str,
+    token: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Fetch the raw content of a single file at a specific commit ref.
+
+    Uses the GitHub Contents API with ``?ref=<sha>`` so we get the exact
+    version of the file as it existed in the commit.
+
+    Returns the decoded text content, or ``None`` if the file cannot be
+    fetched (binary, too large, not found, etc.).
+    """
+    import base64
+
+    url = f"{GITHUB_API}/repos/{owner}/{repo}/contents/{path}"
+    logger.debug("Fetching file content %s/%s:%s @ %s", owner, repo, path, ref[:7])
+    try:
+        with httpx.Client(timeout=15) as client:
+            resp = client.get(
+                url,
+                headers=_default_headers(token),
+                params={"ref": ref},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            # GitHub returns base64-encoded content for files < 1 MB
+            encoding = data.get("encoding", "")
+            content = data.get("content", "")
+
+            if encoding == "base64" and content:
+                try:
+                    return base64.b64decode(content).decode("utf-8", errors="replace")
+                except Exception:
+                    return None
+            return None
+    except httpx.HTTPStatusError:
+        return None  # file not found or too large — non-fatal
+    except httpx.RequestError as exc:
+        logger.warning("Could not fetch file %s: %s", path, exc)
+        return None
+
+
+def fetch_commit_files_content(
+    owner: str,
+    repo: str,
+    sha: str,
+    token: Optional[str] = None,
+    max_files: int = 20,
+) -> list[tuple[str, str]]:
+    """
+    For a given commit, fetch the source content of each changed file.
+
+    This first calls :func:`fetch_commit_detail` to get the list of modified
+    files, then fetches each file's content at the commit ref.
+
+    Args:
+        owner / repo:  Repository coordinates.
+        sha:           Commit SHA.
+        token:         GitHub PAT.
+        max_files:     Cap on how many files to download (to avoid API abuse).
+
+    Returns:
+        List of ``(filename, source_content)`` tuples.
+    """
+    try:
+        detail = fetch_commit_detail(owner, repo, sha, token=token)
+    except Exception as exc:
+        logger.warning("Could not fetch commit detail for %s: %s", sha[:7], exc)
+        return []
+
+    files_meta = detail.get("files", [])
+    results: list[tuple[str, str]] = []
+
+    for fm in files_meta[:max_files]:
+        filename = fm.get("filename", "")
+        status = fm.get("status", "")
+
+        # Skip removed files — nothing to analyse
+        if status == "removed":
+            continue
+
+        # Try to use the patch (diff) content directly if the full file is
+        # too expensive to fetch.  For complexity analysis we need full source,
+        # so we fetch it.
+        content = fetch_file_content(owner, repo, filename, ref=sha, token=token)
+        if content is not None:
+            results.append((filename, content))
+
+    logger.info(
+        "Fetched content for %d / %d files in commit %s",
+        len(results), len(files_meta), sha[:7],
+    )
+    return results

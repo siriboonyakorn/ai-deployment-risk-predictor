@@ -10,7 +10,7 @@ from app.config import get_settings
 from app.database import Base, engine
 from app.exceptions import AppError
 from app.logging_config import setup_logging
-from app.routers import auth, health, predictions, repositories, webhooks
+from app.routers import auth, dashboard, health, predictions, repositories, webhooks
 
 settings = get_settings()
 
@@ -34,6 +34,18 @@ async def lifespan(app: FastAPI):
             "Ensure DB is running or set DATABASE_URL in .env.",
             exc,
         )
+
+    # Load trained ML model if available (AI_Model_Engineering.md §11)
+    try:
+        from app.ml.predictor import init_predictor
+        p = init_predictor()
+        if p.is_ml_available:
+            logger.info("ML model loaded: %s (%s)", p.model_name, p.version)
+        else:
+            logger.info("No trained ML model found — using rule-based engine.")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not initialise ML predictor: %s", exc)
+
     yield
 
 
@@ -109,6 +121,7 @@ async def log_requests(request: Request, call_next):
 
 app.include_router(health.router, prefix=settings.API_PREFIX)
 app.include_router(auth.router, prefix=settings.API_PREFIX)
+app.include_router(dashboard.router, prefix=settings.API_PREFIX)
 app.include_router(predictions.router, prefix=settings.API_PREFIX)
 app.include_router(repositories.router, prefix=settings.API_PREFIX)
 app.include_router(webhooks.router, prefix=settings.API_PREFIX)

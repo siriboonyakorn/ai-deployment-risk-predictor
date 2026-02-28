@@ -1,7 +1,27 @@
 ﻿"use client";
 
-import { useEffect, useState } from "react";
-import { api, AuthUser, HealthResponse, Repository } from "@/lib/api";
+import { useEffect, useState, useCallback } from "react";
+import {
+  api,
+  AuthUser,
+  DashboardStats,
+  HealthResponse,
+  RecentActivityItem,
+  Repository,
+  RiskDistributionResponse,
+} from "@/lib/api";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+import RiskBadge from "@/components/RiskBadge";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -20,6 +40,23 @@ function formatUptime(seconds: number) {
   return `${(seconds / 3600).toFixed(1)}h`;
 }
 
+function timeAgo(iso: string | null): string {
+  if (!iso) return "—";
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+const RISK_COLORS: Record<string, string> = {
+  LOW: "#22c55e",
+  MEDIUM: "#f59e0b",
+  HIGH: "#ef4444",
+};
+
 // ---------------------------------------------------------------------------
 // Stat Card
 // ---------------------------------------------------------------------------
@@ -30,6 +67,7 @@ function StatCard({
   accentColor,
   live,
   icon,
+  trend,
 }: {
   label: string;
   value: React.ReactNode;
@@ -37,6 +75,7 @@ function StatCard({
   accentColor?: string;
   live?: boolean;
   icon?: React.ReactNode;
+  trend?: string;
 }) {
   return (
     <div
@@ -62,9 +101,14 @@ function StatCard({
       <div className="text-3xl font-black tracking-tight" style={{ color: accentColor ?? "var(--foreground)" }}>
         {value}
       </div>
-      {sub && (
-        <div className="text-xs" style={{ color: "var(--text-muted)" }}>{sub}</div>
-      )}
+      <div className="flex items-center justify-between">
+        {sub && (
+          <div className="text-xs" style={{ color: "var(--text-muted)" }}>{sub}</div>
+        )}
+        {trend && (
+          <div className="text-[10px] font-semibold" style={{ color: accentColor }}>{trend}</div>
+        )}
+      </div>
     </div>
   );
 }
@@ -156,6 +200,120 @@ function SystemHealthWidget() {
 }
 
 // ---------------------------------------------------------------------------
+// Risk Distribution Pie Chart
+// ---------------------------------------------------------------------------
+function RiskDistributionChart({ data }: { data: RiskDistributionResponse | null }) {
+  if (!data || data.total === 0) {
+    return (
+      <div className="card p-5">
+        <SectionHeader title="Risk Distribution" />
+        <div className="flex items-center justify-center h-48 text-xs" style={{ color: "var(--text-muted)" }}>
+          No risk data yet. Analyze some commits to see the distribution.
+        </div>
+      </div>
+    );
+  }
+
+  const pieData = data.distribution.map((d) => ({
+    name: d.level,
+    value: d.count,
+    color: RISK_COLORS[d.level] ?? "#6b7a96",
+  }));
+
+  return (
+    <div className="card p-5">
+      <SectionHeader title="Risk Distribution" />
+      <div className="flex items-center gap-4 mt-4">
+        <div className="w-40 h-40 flex-shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={pieData}
+                cx="50%"
+                cy="50%"
+                innerRadius={35}
+                outerRadius={65}
+                paddingAngle={3}
+                dataKey="value"
+                stroke="none"
+              >
+                {pieData.map((entry, idx) => (
+                  <Cell key={idx} fill={entry.color} />
+                ))}
+              </Pie>
+              <Tooltip
+                contentStyle={{
+                  background: "var(--surface-raised)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "8px",
+                  fontSize: "12px",
+                  color: "var(--foreground)",
+                }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="flex-1 space-y-2">
+          {data.distribution.map((d) => (
+            <div key={d.level} className="flex items-center gap-3">
+              <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: RISK_COLORS[d.level] }} />
+              <span className="text-xs flex-1" style={{ color: "var(--foreground)" }}>{d.level}</span>
+              <span className="text-xs font-mono font-bold" style={{ color: "var(--foreground)" }}>{d.count}</span>
+              <span className="text-xs font-mono w-12 text-right" style={{ color: "var(--text-muted)" }}>{d.percentage}%</span>
+            </div>
+          ))}
+          <div className="border-t pt-2 mt-2 flex items-center justify-between text-xs" style={{ borderColor: "var(--border-subtle)" }}>
+            <span style={{ color: "var(--text-muted)" }}>Total</span>
+            <span className="font-mono font-bold" style={{ color: "var(--foreground)" }}>{data.total}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Score Histogram Bar Chart
+// ---------------------------------------------------------------------------
+function ScoreHistogramChart({ data }: { data: RiskDistributionResponse | null }) {
+  if (!data || data.total === 0) return null;
+
+  const barData = data.score_histogram.map((b) => ({
+    range: b.range,
+    count: b.count,
+    fill: parseInt(b.range) < 30 ? RISK_COLORS.LOW : parseInt(b.range) < 60 ? RISK_COLORS.MEDIUM : RISK_COLORS.HIGH,
+  }));
+
+  return (
+    <div className="card p-5">
+      <SectionHeader title="Score Distribution" />
+      <div className="mt-4 h-48">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={barData} barCategoryGap="15%">
+            <XAxis dataKey="range" tick={{ fontSize: 10, fill: "var(--text-muted)" }} axisLine={{ stroke: "var(--border)" }} tickLine={false} />
+            <YAxis tick={{ fontSize: 10, fill: "var(--text-muted)" }} axisLine={false} tickLine={false} allowDecimals={false} />
+            <Tooltip
+              contentStyle={{
+                background: "var(--surface-raised)",
+                border: "1px solid var(--border)",
+                borderRadius: "8px",
+                fontSize: "12px",
+                color: "var(--foreground)",
+              }}
+            />
+            <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+              {barData.map((entry, idx) => (
+                <Cell key={idx} fill={entry.fill} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Pipeline flow
 // ---------------------------------------------------------------------------
 const pipelineSteps = [
@@ -200,17 +358,23 @@ function PipelineFlow() {
 }
 
 // ---------------------------------------------------------------------------
-// Recent activity
+// Recent Activity (live data)
 // ---------------------------------------------------------------------------
-const placeholderActivity = [
-  { sha: "a3f2c1d", repo: "owner/api-service", risk: "HIGH", score: 82, msg: "fix: urgent hotfix for auth bypass", time: "2m ago", color: "#ef4444" },
-  { sha: "b7e8912", repo: "owner/frontend-app", risk: "MED", score: 45, msg: "feat: add user profile page", time: "14m ago", color: "#f59e0b" },
-  { sha: "c1d4567", repo: "owner/data-pipeline", risk: "LOW", score: 12, msg: "chore: update dependencies", time: "1h ago", color: "#22c55e" },
-  { sha: "d9a0b3e", repo: "owner/api-service", risk: "LOW", score: 8, msg: "docs: update README", time: "2h ago", color: "#22c55e" },
-];
+function RecentActivity({ items, loading }: { items: RecentActivityItem[]; loading: boolean }) {
+  if (loading) {
+    return (
+      <div className="card p-5">
+        <SectionHeader title="Recent Activity" />
+        <div className="space-y-2 mt-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-12 rounded skeleton" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
-function RecentActivity({ repoCount }: { repoCount: number }) {
-  if (repoCount === 0) {
+  if (items.length === 0) {
     return (
       <div className="card p-5">
         <SectionHeader title="Recent Activity" />
@@ -224,19 +388,12 @@ function RecentActivity({ repoCount }: { repoCount: number }) {
             </svg>
           </div>
           <div className="text-center">
-            <div className="text-sm font-semibold" style={{ color: "var(--foreground)" }}>
-              No activity yet
-            </div>
+            <div className="text-sm font-semibold" style={{ color: "var(--foreground)" }}>No activity yet</div>
             <div className="text-xs mt-1 max-w-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
-              Import a repository to start tracking commit risk.
+              Import a repository and analyze commits to start tracking risk.
             </div>
           </div>
-          <a
-            href="/repositories"
-            className="btn-primary text-xs px-4 py-2"
-          >
-            Import Repository
-          </a>
+          <a href="/repositories" className="btn-primary text-xs px-4 py-2">Import Repository</a>
         </div>
       </div>
     );
@@ -246,80 +403,31 @@ function RecentActivity({ repoCount }: { repoCount: number }) {
     <div className="card p-5">
       <div className="flex items-center justify-between mb-4">
         <SectionHeader title="Recent Activity" />
-        <span
-          className="text-[10px] font-bold px-2 py-0.5 rounded-md border"
-          style={{
-            background: "rgba(245,158,11,0.08)",
-            color: "#f59e0b",
-            borderColor: "rgba(245,158,11,0.2)",
-          }}
-        >
-          DEMO DATA
-        </span>
+        <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>{items.length} commits</span>
       </div>
       <div className="space-y-1.5">
-        {placeholderActivity.map((a) => (
-          <div
-            key={a.sha}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors"
-            style={{ background: "var(--surface-raised)" }}
-          >
-            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: a.color }} />
-            <code className="text-[11px] font-mono flex-shrink-0" style={{ color: "var(--text-muted)" }}>
-              {a.sha}
-            </code>
-            <span className="truncate flex-1 text-xs" style={{ color: "var(--foreground)" }}>
-              {a.msg}
-            </span>
-            <span
-              className="badge flex-shrink-0"
-              style={{ color: a.color, borderColor: `${a.color}35`, background: `${a.color}10`, fontSize: "10px" }}
+        {items.map((a) => {
+          const color = RISK_COLORS[a.risk_level] ?? "#6b7a96";
+          return (
+            <div
+              key={a.sha}
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors"
+              style={{ background: "var(--surface-raised)" }}
             >
-              {a.risk} {a.score}%
-            </span>
-            <span className="text-[11px] flex-shrink-0" style={{ color: "var(--text-muted)" }}>
-              {a.time}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Roadmap
-// ---------------------------------------------------------------------------
-const roadmapItems = [
-  { label: "Graph Neural Network model", done: false },
-  { label: "Multi-repo risk analytics", done: false },
-  { label: "Team risk profiling", done: false },
-  { label: "Real-time anomaly detection", done: false },
-  { label: "Technical debt scoring", done: false },
-  { label: "SaaS billing & plans", done: false },
-];
-
-function Roadmap() {
-  return (
-    <div className="card p-5">
-      <SectionHeader title="Roadmap" />
-      <div className="space-y-2 mt-4">
-        {roadmapItems.map((item) => (
-          <div key={item.label} className="flex items-center gap-2.5 text-xs">
-            <span
-              className="w-3.5 h-3.5 rounded flex items-center justify-center flex-shrink-0"
-              style={{
-                border: `1px solid ${item.done ? "#22c55e" : "var(--border)"}`,
-                background: item.done ? "rgba(34,197,94,0.1)" : "transparent",
-              }}
-            >
-              {item.done && <span style={{ color: "#22c55e", fontSize: "9px", fontWeight: "bold" }}>✓</span>}
-            </span>
-            <span style={{ color: item.done ? "var(--foreground)" : "var(--text-muted)" }}>
-              {item.label}
-            </span>
-          </div>
-        ))}
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+              <code className="text-[11px] font-mono flex-shrink-0" style={{ color: "var(--text-muted)" }}>
+                {a.sha.slice(0, 7)}
+              </code>
+              <span className="truncate flex-1 text-xs" style={{ color: "var(--foreground)" }}>
+                {a.message.split("\n")[0] || "(no message)"}
+              </span>
+              <RiskBadge level={a.risk_level} score={a.risk_score} />
+              <span className="text-[11px] flex-shrink-0" style={{ color: "var(--text-muted)" }}>
+                {timeAgo(a.analyzed_at)}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -342,12 +450,25 @@ function SectionHeader({ title }: { title: string }) {
 export default function DashboardPage() {
   const [repos, setRepos] = useState<Repository[]>([]);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [distro, setDistro] = useState<RiskDistributionResponse | null>(null);
+  const [activity, setActivity] = useState<RecentActivityItem[]>([]);
   const [loadingRepos, setLoadingRepos] = useState(true);
+  const [loadingActivity, setLoadingActivity] = useState(true);
 
-  useEffect(() => {
+  const fetchData = useCallback(() => {
     api.repositories.list().then(setRepos).catch(() => {}).finally(() => setLoadingRepos(false));
     api.auth.me().then(setUser).catch(() => {});
+    api.dashboard.stats().then(setStats).catch(() => {});
+    api.dashboard.riskDistribution().then(setDistro).catch(() => {});
+    api.dashboard.recentActivity(10).then((r) => setActivity(r.items)).catch(() => {}).finally(() => setLoadingActivity(false));
   }, []);
+
+  useEffect(() => {
+    fetchData();
+    const id = setInterval(fetchData, 30_000);
+    return () => clearInterval(id);
+  }, [fetchData]);
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -364,10 +485,7 @@ export default function DashboardPage() {
             Here's what's happening with your deployments today.
           </p>
         </div>
-        <a
-          href="/repositories"
-          className="btn-primary text-xs px-3 py-1.5"
-        >
+        <a href="/repositories" className="btn-primary text-xs px-3 py-1.5">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
             <path d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z" />
           </svg>
@@ -393,36 +511,75 @@ export default function DashboardPage() {
           />
           <StatCard
             label="Commits Analysed"
-            value="—"
-            sub="Requires webhook pipeline"
+            value={stats?.total_assessments ?? "—"}
+            sub={stats?.recent_commits_24h ? `${stats.recent_commits_24h} in last 24h` : "total assessments"}
             accentColor="#a78bfa"
+            trend={stats && stats.total_commits > 0 ? `${stats.total_commits} total commits` : undefined}
           />
           <StatCard
             label="High Risk Commits"
-            value="—"
-            sub="Requires webhook pipeline"
+            value={stats?.high_risk_count ?? "—"}
+            sub={stats?.recent_high_risk_24h ? `${stats.recent_high_risk_24h} in last 24h` : "identified as HIGH"}
             accentColor="#ef4444"
+            icon={
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M8.22 1.754a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm-1.763-.707c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-.25-5.25a.75.75 0 0 0-1.5 0v2.5a.75.75 0 0 0 1.5 0v-2.5Z" />
+              </svg>
+            }
           />
           <StatCard
             label="Avg Risk Score"
-            value="—"
-            sub="Requires webhook pipeline"
-            accentColor="#f59e0b"
+            value={stats?.avg_risk_score != null ? stats.avg_risk_score.toFixed(1) : "—"}
+            sub={
+              stats?.avg_risk_score != null
+                ? stats.avg_risk_score < 30 ? "Overall: Low risk" : stats.avg_risk_score < 60 ? "Overall: Moderate risk" : "Overall: High risk"
+                : "no assessments yet"
+            }
+            accentColor={
+              stats?.avg_risk_score != null
+                ? stats.avg_risk_score < 30 ? "#22c55e" : stats.avg_risk_score < 60 ? "#f59e0b" : "#ef4444"
+                : "#f59e0b"
+            }
           />
         </div>
+
+        {/* Risk level category summary */}
+        {stats && stats.total_assessments > 0 && (
+          <div className="grid grid-cols-3 gap-4">
+            {(["LOW", "MEDIUM", "HIGH"] as const).map((level) => {
+              const count = stats.risk_counts[level];
+              const pct = stats.total_assessments ? ((count / stats.total_assessments) * 100).toFixed(1) : "0";
+              return (
+                <div key={level} className="card p-4 flex items-center gap-4" style={{ borderLeftWidth: 3, borderLeftColor: RISK_COLORS[level] }}>
+                  <div
+                    className="w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold"
+                    style={{ background: `${RISK_COLORS[level]}15`, color: RISK_COLORS[level] }}
+                  >
+                    {count}
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold" style={{ color: RISK_COLORS[level] }}>{level} RISK</div>
+                    <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{pct}% of total</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Main grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           {/* Left 2/3 */}
           <div className="lg:col-span-2 space-y-5">
             <PipelineFlow />
-            <RecentActivity repoCount={repos.length} />
+            <RecentActivity items={activity} loading={loadingActivity} />
           </div>
 
           {/* Right 1/3 */}
           <div className="space-y-5">
+            <RiskDistributionChart data={distro} />
+            <ScoreHistogramChart data={distro} />
             <SystemHealthWidget />
-            <Roadmap />
           </div>
         </div>
       </main>
